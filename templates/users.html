@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - Firewall Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            min-height: 100vh;
+            color: #e2e8f0;
+        }
+
+        .navbar {
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .navbar-brand {
+            font-size: 20px;
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+
+        .navbar-nav {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .nav-link {
+            color: #cbd5e1;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            background: #334155;
+            color: #f1f5f9;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 32px;
+            color: #f1f5f9;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+
+        .btn-secondary {
+            background: #475569;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #334155;
+        }
+
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            background: #0f172a;
+            padding: 12px;
+            text-align: left;
+            color: #cbd5e1;
+            font-weight: 600;
+            border-bottom: 2px solid #334155;
+        }
+
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #334155;
+        }
+
+        tr:hover {
+            background: #0f172a;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 24px;
+            color: #f1f5f9;
+        }
+
+        .close {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 28px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: #cbd5e1;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-size: 14px;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #065f46;
+            border: 1px solid #047857;
+            color: #d1fae5;
+        }
+
+        .alert-error {
+            background: #7f1d1d;
+            border: 1px solid #991b1b;
+            color: #fecaca;
+        }
+    </style>
+</head>
+
+<body>
+<nav class="navbar">
+    <div class="navbar-brand"><a href="/firewall" class="nav-link">🛡️ Firewall Manager</a></div>
+    <div class="navbar-nav">
+        <a href="/firewall" class="nav-link">Firewall</a>
+        <a href="/users" class="nav-link active">Users</a>
+        <a href="/logout" class="nav-link">Logout [{{.Username}}]</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="header">
+        <h1>User Management</h1>
+        <div>
+            <button class="btn btn-secondary" onclick="openPasswordModal()">Change Password</button>
+            <button class="btn btn-primary" onclick="openUserModal()">Add User</button>
+        </div>
+    </div>
+
+    <div id="alert"></div>
+
+    <div class="card">
+        <table id="usersTable">
+            <thead>
+            <tr>
+                <th>ID</th>
+                <th>Username</th>
+                <th>Display Name</th>
+                <th>Actions</th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Add User Modal -->
+<div id="userModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 class="modal-title">Add New User</h2>
+            <button class="close" onclick="closeUserModal()">&times;</button>
+        </div>
+        <form onsubmit="addUser(event)">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="newUsername" required>
+            </div>
+            <div class="form-group">
+                <label>Display Name</label>
+                <input type="text" id="newDisplayName" placeholder="Optional">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="newPassword" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Create User</button>
+        </form>
+    </div>
+</div>
+
+<!-- Change Password Modal -->
+<div id="passwordModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 class="modal-title">Change Password</h2>
+            <button class="close" onclick="closePasswordModal()">&times;</button>
+        </div>
+        <form onsubmit="changePassword(event)">
+            <div class="form-group">
+                <label>Current Password</label>
+                <input type="password" id="currentPassword" required>
+            </div>
+            <div class="form-group">
+                <label>New Password</label>
+                <input type="password" id="newPasswordChange" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Change Password</button>
+        </form>
+    </div>
+</div>
+
+<script>
+    function loadUsers() {
+        fetch('/api/users')
+            .then(r => r.json())
+            .then(users => {
+                const tbody = document.querySelector('#usersTable tbody');
+                tbody.innerHTML = '';
+                users.forEach(user => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                            <td>${user.id}</td>
+                            <td>${user.username}</td>
+                            <td>${user.display_name || '-'}</td>
+                            <td>
+                                <button class="btn btn-danger" onclick="deleteUser(${user.id})">Delete</button>
+                            </td>
+                        `;
+                    tbody.appendChild(tr);
+                });
+            });
+    }
+
+    function openUserModal() {
+        document.getElementById('userModal').classList.add('active');
+    }
+
+    function closeUserModal() {
+        document.getElementById('userModal').classList.remove('active');
+        document.getElementById('newUsername').value = '';
+        document.getElementById('newPassword').value = '';
+    }
+
+    function openPasswordModal() {
+        document.getElementById('passwordModal').classList.add('active');
+    }
+
+    function closePasswordModal() {
+        document.getElementById('passwordModal').classList.remove('active');
+        document.getElementById('currentPassword').value = '';
+        document.getElementById('newPasswordChange').value = '';
+    }
+
+    function showAlert(message, type) {
+        const alert = document.getElementById('alert');
+        alert.className = `alert alert-${type}`;
+        alert.textContent = message;
+        setTimeout(() => alert.className = '', 3000);
+    }
+
+    function addUser(e) {
+        e.preventDefault();
+        const username = document.getElementById('newUsername').value;
+        const display_name = document.getElementById('newDisplayName').value;
+        const password = document.getElementById('newPassword').value;
+
+        fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, display_name, password })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showAlert(data.error, 'error');
+                } else {
+                    showAlert('User created successfully', 'success');
+                    closeUserModal();
+                    loadUsers();
+                }
+            });
+    }
+
+    function deleteUser(id) {
+        if (!confirm('Are you sure you want to delete this user?')) return;
+
+        fetch('/api/users/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id })
+        })
+            .then(r => r.json())
+            .then(data => {
+                showAlert('User deleted', 'success');
+                loadUsers();
+            });
+    }
+
+    function changePassword(e) {
+        e.preventDefault();
+        const current_password = document.getElementById('currentPassword').value;
+        const new_password = document.getElementById('newPasswordChange').value;
+
+        fetch('/api/users/password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_password, new_password })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    showAlert(data.error, 'error');
+                } else {
+                    showAlert('Password changed successfully', 'success');
+                    closePasswordModal();
+                }
+            });
+    }
+
+    loadUsers();
+</script>
+</body>
+
+</html>
