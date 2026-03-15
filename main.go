@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -532,6 +534,11 @@ func apiUpdateSafeIPsHandler(w http.ResponseWriter, r *http.Request) {
 		if ip == "" {
 			continue
 		}
+		if !isValidIP(ip) {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid IP address: " + ip})
+			return
+		}
 		if _, err := tx.Exec("INSERT INTO safe_ips (ip, description) VALUES (?, ?)", ip, safeIP.Description); err != nil {
 			tx.Rollback()
 			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to insert safe IP: " + err.Error()})
@@ -622,6 +629,24 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid protocol: must be tcp, udp, or any"})
 			return
 		}
+		if !isValidIP(data.DestIP) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid destination IP: " + data.DestIP})
+			return
+		}
+		if !isValidPort(data.DestPort) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid destination port: " + data.DestPort})
+			return
+		}
+		for _, source := range data.Sources {
+			if !isValidIP(source.SourceIP) {
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source IP: " + source.SourceIP})
+				return
+			}
+			if !isValidPort(source.SourcePort) {
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source port: " + source.SourcePort})
+				return
+			}
+		}
 
 		tx, err := db.Begin()
 		if err != nil {
@@ -690,6 +715,24 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 		if !isValidProtocol(data.Protocol) {
 			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid protocol: must be tcp, udp, or any"})
 			return
+		}
+		if !isValidIP(data.DestIP) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid destination IP: " + data.DestIP})
+			return
+		}
+		if !isValidPort(data.DestPort) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid destination port: " + data.DestPort})
+			return
+		}
+		for _, source := range data.Sources {
+			if !isValidIP(source.SourceIP) {
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source IP: " + source.SourceIP})
+				return
+			}
+			if !isValidPort(source.SourcePort) {
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source port: " + source.SourcePort})
+				return
+			}
 		}
 
 		tx, err := db.Begin()
@@ -770,6 +813,33 @@ func isValidAction(a string) bool {
 
 func isValidProtocol(p string) bool {
 	return p == "tcp" || p == "udp" || p == "any"
+}
+
+// isValidIP accepts a plain IP, CIDR notation, or empty string (meaning "any").
+func isValidIP(ip string) bool {
+	if ip == "" {
+		return true
+	}
+	if net.ParseIP(ip) != nil {
+		return true
+	}
+	_, _, err := net.ParseCIDR(ip)
+	return err == nil
+}
+
+// isValidPort accepts a single port number, a UFW range (e.g. "80:90"), or empty string.
+func isValidPort(port string) bool {
+	if port == "" {
+		return true
+	}
+	parts := strings.SplitN(port, ":", 2)
+	for _, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || n < 1 || n > 65535 {
+			return false
+		}
+	}
+	return true
 }
 
 func rulesHandler(w http.ResponseWriter, r *http.Request) {
@@ -882,6 +952,28 @@ func apiImportGroupsHandler(w http.ResponseWriter, r *http.Request) {
 			tx.Rollback()
 			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid protocol in group \"" + g.Name + "\": must be tcp, udp, or any"})
 			return
+		}
+		if !isValidIP(g.DestIP) {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid destination IP in group \"" + g.Name + "\": " + g.DestIP})
+			return
+		}
+		if !isValidPort(g.DestPort) {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid destination port in group \"" + g.Name + "\": " + g.DestPort})
+			return
+		}
+		for _, s := range g.Sources {
+			if !isValidIP(s.SourceIP) {
+				tx.Rollback()
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source IP in group \"" + g.Name + "\": " + s.SourceIP})
+				return
+			}
+			if !isValidPort(s.SourcePort) {
+				tx.Rollback()
+				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source port in group \"" + g.Name + "\": " + s.SourcePort})
+				return
+			}
 		}
 		result, err := tx.Exec(`INSERT INTO rule_groups (name, description, action, protocol, dest_ip, dest_port) VALUES (?, ?, ?, ?, ?, ?)`,
 			g.Name, g.Description, g.Action, g.Protocol, g.DestIP, g.DestPort)
