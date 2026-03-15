@@ -26,7 +26,10 @@ $GO_BIN mod download
 
 # Build the main binary with CGO enabled
 echo "Compiling main binary..."
-CGO_ENABLED=1 $GO_BIN build -o firewall-manager main.go schema.go
+CGO_ENABLED=1 $GO_BIN build -o firewall-manager \
+    main.go schema.go models.go validation.go ufw.go \
+    handlers_auth.go handlers_users.go handlers_firewall.go \
+    handlers_groups.go handlers_safe_ips.go handlers_rules.go
 
 # Build the init-db tool with CGO enabled
 echo "Compiling init-db tool..."
