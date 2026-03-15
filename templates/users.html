@@ -161,21 +161,39 @@
             background: #1e293b;
             border: 1px solid #334155;
             border-radius: 12px;
-            padding: 30px;
             width: 90%;
             max-width: 500px;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            padding: 25px 30px 20px;
+            flex-shrink: 0;
+            border-bottom: 1px solid #334155;
         }
 
         .modal-title {
             font-size: 24px;
             color: #f1f5f9;
+            margin: 0;
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 25px 30px;
+        }
+
+        .modal-footer {
+            padding: 15px 30px 20px;
+            border-top: 1px solid #334155;
+            flex-shrink: 0;
         }
 
         .close {
@@ -273,48 +291,56 @@
 </div>
 
 <!-- Add User Modal -->
-<div id="userModal" class="modal">
+<div id="userModal" class="modal" onclick="if(event.target===this)closeUserModal()">
     <div class="modal-content">
         <div class="modal-header">
             <h2 class="modal-title">Add New User</h2>
             <button class="close" onclick="closeUserModal()">&times;</button>
         </div>
-        <form onsubmit="addUser(event)">
-            <div class="form-group">
-                <label>Username</label>
-                <input type="text" id="newUsername" required>
-            </div>
-            <div class="form-group">
-                <label>Display Name</label>
-                <input type="text" id="newDisplayName" placeholder="Optional">
-            </div>
-            <div class="form-group">
-                <label>Password</label>
-                <input type="password" id="newPassword" required>
-            </div>
-            <button type="submit" class="btn btn-primary">Create User</button>
-        </form>
+        <div class="modal-body">
+            <form id="userForm" onsubmit="addUser(event)">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" id="newUsername" required>
+                </div>
+                <div class="form-group">
+                    <label>Display Name</label>
+                    <input type="text" id="newDisplayName" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="newPassword" required>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="submit" form="userForm" class="btn btn-primary">Create User</button>
+        </div>
     </div>
 </div>
 
 <!-- Change Password Modal -->
-<div id="passwordModal" class="modal">
+<div id="passwordModal" class="modal" onclick="if(event.target===this)closePasswordModal()">
     <div class="modal-content">
         <div class="modal-header">
             <h2 class="modal-title">Change Password</h2>
             <button class="close" onclick="closePasswordModal()">&times;</button>
         </div>
-        <form onsubmit="changePassword(event)">
-            <div class="form-group">
-                <label>Current Password</label>
-                <input type="password" id="currentPassword" required>
-            </div>
-            <div class="form-group">
-                <label>New Password</label>
-                <input type="password" id="newPasswordChange" required>
-            </div>
-            <button type="submit" class="btn btn-primary">Change Password</button>
-        </form>
+        <div class="modal-body">
+            <form id="passwordForm" onsubmit="changePassword(event)">
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <input type="password" id="currentPassword" required>
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="newPasswordChange" required>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="submit" form="passwordForm" class="btn btn-primary">Change Password</button>
+        </div>
     </div>
 </div>
 
@@ -425,6 +451,12 @@
                 }
             });
     }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
+        }
+    });
 
     loadUsers();
 </script>

@@ -223,23 +223,39 @@
             background: #1e293b;
             border: 1px solid #334155;
             border-radius: 12px;
-            padding: 30px;
             width: 90%;
             max-width: 700px;
             max-height: 90vh;
-            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
 
         .modal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            padding: 25px 30px 20px;
+            flex-shrink: 0;
+            border-bottom: 1px solid #334155;
         }
 
         .modal-title {
             font-size: 24px;
             color: #f1f5f9;
+            margin: 0;
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 25px 30px;
+        }
+
+        .modal-footer {
+            padding: 15px 30px 20px;
+            border-top: 1px solid #334155;
+            flex-shrink: 0;
         }
 
         .close {
@@ -445,76 +461,81 @@
 </div>
 
 <!-- Add/Edit Group Modal -->
-<div id="groupModal" class="modal">
+<div id="groupModal" class="modal" onclick="if(event.target===this)closeGroupModal()">
     <div class="modal-content">
         <div class="modal-header">
             <h2 class="modal-title" id="groupModalTitle">Add Rule Group</h2>
             <button class="close" onclick="closeGroupModal()">&times;</button>
         </div>
-        <form onsubmit="saveGroup(event)">
-            <input type="hidden" id="groupId">
-            <div class="form-group">
-                <label>Group Name</label>
-                <input type="text" id="groupName" required placeholder="e.g., Allow HTTPS to Web Server">
-            </div>
-            <div class="form-group">
-                <label>Group Description</label>
-                <textarea id="groupDescription" rows="2" placeholder="Optional description"></textarea>
-            </div>
-
-            <h3 style="margin-top: 25px; margin-bottom: 15px; color: #f1f5f9;">Destination (What to protect)</h3>
-            <div class="form-group">
-                <label>Action</label>
-                <select id="groupAction" required>
-                    <option value="allow">Allow</option>
-                    <option value="deny">Deny</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Protocol</label>
-                <select id="groupProtocol">
-                    <option value="any">Any</option>
-                    <option value="tcp">TCP</option>
-                    <option value="udp">UDP</option>
-                </select>
-            </div>
-            <div class="form-row">
+        <div class="modal-body">
+            <form id="groupForm" onsubmit="saveGroup(event)">
+                <input type="hidden" id="groupId">
                 <div class="form-group">
-                    <label>Destination IP/CIDR (optional)</label>
-                    <input type="text" id="groupDestIP" placeholder="e.g., 10.0.0.5">
+                    <label>Group Name</label>
+                    <input type="text" id="groupName" required placeholder="e.g., Allow HTTPS to Web Server">
                 </div>
                 <div class="form-group">
-                    <label>Destination Port</label>
-                    <input type="text" id="groupDestPort" placeholder="e.g., 443" required>
+                    <label>Group Description</label>
+                    <textarea id="groupDescription" rows="2" placeholder="Optional description"></textarea>
                 </div>
-            </div>
 
-            <h3 style="margin-top: 25px; margin-bottom: 15px; color: #f1f5f9;">Sources (Who can access)</h3>
-            <div id="sourcesContainer"></div>
+                <h3 style="margin-top: 25px; margin-bottom: 15px; color: #f1f5f9;">Destination (What to protect)</h3>
+                <div class="form-group">
+                    <label>Action</label>
+                    <select id="groupAction" required>
+                        <option value="allow">Allow</option>
+                        <option value="deny">Deny</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Protocol</label>
+                    <select id="groupProtocol">
+                        <option value="any">Any</option>
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Destination IP/CIDR (optional)</label>
+                        <input type="text" id="groupDestIP" placeholder="e.g., 10.0.0.5">
+                    </div>
+                    <div class="form-group">
+                        <label>Destination Port</label>
+                        <input type="text" id="groupDestPort" placeholder="e.g., 443" required>
+                    </div>
+                </div>
 
-            <button type="button" class="btn btn-secondary" onclick="addSourceForm()" style="margin-bottom: 20px;">+
-                Add Source</button>
-            <br>
-            <button type="submit" class="btn btn-primary">Save Group</button>
-        </form>
+                <h3 style="margin-top: 25px; margin-bottom: 15px; color: #f1f5f9;">Sources (Who can access)</h3>
+                <div id="sourcesContainer"></div>
+
+                <button type="button" class="btn btn-secondary" onclick="addSourceForm()">+ Add Source</button>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="submit" form="groupForm" class="btn btn-primary">Save Group</button>
+        </div>
     </div>
 </div>
 
 <!-- Safe IPs Modal -->
-<div id="safeIPsModal" class="modal">
+<div id="safeIPsModal" class="modal" onclick="if(event.target===this)closeSafeIPsModal()">
     <div class="modal-content">
         <div class="modal-header">
             <h2 class="modal-title">Manage Safe IPs</h2>
             <button class="close" onclick="closeSafeIPsModal()">&times;</button>
         </div>
-        <form onsubmit="saveSafeIPs(event)">
-            <p style="color: #94a3b8; margin-bottom: 15px;">These IPs will always have access to SSH (port 22) and
-                management interface.</p>
-            <div id="safeIPsContainer"></div>
-            <button type="button" class="btn btn-secondary" onclick="addSafeIPForm()">+ Add IP</button>
-            <br><br>
-            <button type="submit" class="btn btn-primary">Save Safe IPs</button>
-        </form>
+        <div class="modal-body">
+            <form id="safeIPsForm" onsubmit="saveSafeIPs(event)">
+                <p style="color: #94a3b8; margin-bottom: 15px;">These IPs will always have access to SSH (port 22) and
+                    management interface.</p>
+                <div id="safeIPsContainer"></div>
+                <button type="button" class="btn btn-secondary" onclick="addSafeIPForm()">+ Add IP</button>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="submit" form="safeIPsForm" class="btn btn-primary">Save Safe IPs</button>
+        </div>
     </div>
 </div>
 
@@ -873,6 +894,12 @@
                 loadGroups();
             });
     }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal.active').forEach(m => m.classList.remove('active'));
+        }
+    });
 
     loadStatus();
     loadSafeIPs();
