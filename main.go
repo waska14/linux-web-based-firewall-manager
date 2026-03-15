@@ -30,6 +30,10 @@ var (
 	syncMu    sync.Mutex
 )
 
+// dummyHash is used in loginHandler to ensure bcrypt always runs,
+// preventing timing-based username enumeration.
+var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("dummy"), bcrypt.DefaultCost)
+
 type User struct {
 	ID          int
 	Username    string
@@ -181,7 +185,14 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?", username).
 		Scan(&user.ID, &user.Username, &user.Password)
 
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)) != nil {
+	if err != nil {
+		// Always run bcrypt to prevent timing-based username enumeration
+		bcrypt.CompareHashAndPassword(dummyHash, []byte(password))
+		templates.ExecuteTemplate(w, "login.html", map[string]string{"Error": "Invalid credentials"})
+		return
+	}
+
+	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)) != nil {
 		templates.ExecuteTemplate(w, "login.html", map[string]string{"Error": "Invalid credentials"})
 		return
 	}
@@ -270,11 +281,18 @@ func apiUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		var data map[string]string
-		json.NewDecoder(r.Body).Decode(&data)
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+			return
+		}
 
-		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(data["password"]), bcrypt.DefaultCost)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(data["password"]), bcrypt.DefaultCost)
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to hash password"})
+			return
+		}
 
-		_, err := db.Exec("INSERT INTO users (username, display_name, password) VALUES (?, ?, ?)",
+		_, err = db.Exec("INSERT INTO users (username, display_name, password) VALUES (?, ?, ?)",
 			data["username"], data["display_name"], string(hashedPassword))
 
 		if err != nil {
@@ -288,7 +306,10 @@ func apiUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "PUT" {
 		var data map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&data)
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+			return
+		}
 
 		_, err := db.Exec("UPDATE users SET display_name = ? WHERE id = ?",
 			data["display_name"], int(data["id"].(float64)))
@@ -309,7 +330,10 @@ func apiDeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var data map[string]int
-	json.NewDecoder(r.Body).Decode(&data)
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
 
 	_, err := db.Exec("DELETE FROM users WHERE id = ?", data["id"])
 	if err != nil {
@@ -331,7 +355,10 @@ func apiChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
 	db.QueryRow("SELECT username FROM sessions WHERE token = ?", cookie.Value).Scan(&username)
 
 	var data map[string]string
-	json.NewDecoder(r.Body).Decode(&data)
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
 
 	var currentHash string
 	db.QueryRow("SELECT password FROM users WHERE username = ?", username).Scan(&currentHash)
@@ -341,7 +368,11 @@ func apiChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newHash, _ := bcrypt.GenerateFromPassword([]byte(data["new_password"]), bcrypt.DefaultCost)
+	newHash, err := bcrypt.GenerateFromPassword([]byte(data["new_password"]), bcrypt.DefaultCost)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to hash password"})
+		return
+	}
 	db.Exec("UPDATE users SET password = ? WHERE username = ?", string(newHash), username)
 
 	json.NewEncoder(w).Encode(map[string]string{"success": "Password changed"})
@@ -372,7 +403,10 @@ func apiFirewallToggleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var data map[string]string
-	json.NewDecoder(r.Body).Decode(&data)
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
 
 	var cmd *exec.Cmd
 	if data["action"] == "enable" {
@@ -403,8 +437,26 @@ func apiFirewallResetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db.Exec("DELETE FROM rule_sources")
-	db.Exec("DELETE FROM rule_groups")
+	tx, err := db.Begin()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := tx.Exec("DELETE FROM rule_sources"); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := tx.Exec("DELETE FROM rule_groups"); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
 
 	if err := syncUFWRules(); err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to sync firewall rules: " + err.Error()})
@@ -535,20 +587,38 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		var data struct {
-			Name        string                `json:"name"`
-			Description string                `json:"description"`
-			Action      string                `json:"action"`
-			Protocol    string                `json:"protocol"`
-			DestIP      string                `json:"dest_ip"`
-			DestPort    string                `json:"dest_port"`
+			Name        string               `json:"name"`
+			Description string               `json:"description"`
+			Action      string               `json:"action"`
+			Protocol    string               `json:"protocol"`
+			DestIP      string               `json:"dest_ip"`
+			DestPort    string               `json:"dest_port"`
 			Sources     []FirewallRuleSource `json:"sources"`
 		}
-		json.NewDecoder(r.Body).Decode(&data)
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+			return
+		}
+		if !isValidAction(data.Action) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid action: must be allow or deny"})
+			return
+		}
+		if !isValidProtocol(data.Protocol) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid protocol: must be tcp, udp, or any"})
+			return
+		}
 
-		result, err := db.Exec(`INSERT INTO rule_groups (name, description, action, protocol, dest_ip, dest_port)
+		tx, err := db.Begin()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		result, err := tx.Exec(`INSERT INTO rule_groups (name, description, action, protocol, dest_ip, dest_port)
 			VALUES (?, ?, ?, ?, ?, ?)`,
 			data.Name, data.Description, data.Action, data.Protocol, data.DestIP, data.DestPort)
 		if err != nil {
+			tx.Rollback()
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 			return
 		}
@@ -556,14 +626,19 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 		groupID, _ := result.LastInsertId()
 
 		for _, source := range data.Sources {
-			_, err := db.Exec(`INSERT INTO rule_sources (group_id, source_ip, source_port, description)
+			if _, err := tx.Exec(`INSERT INTO rule_sources (group_id, source_ip, source_port, description)
 				VALUES (?, ?, ?, ?)`,
-				groupID, source.SourceIP, source.SourcePort, source.Description)
-
-			if err != nil {
+				groupID, source.SourceIP, source.SourcePort, source.Description); err != nil {
+				tx.Rollback()
 				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 				return
 			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
 		}
 
 		if err := syncUFWRules(); err != nil {
@@ -580,27 +655,62 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "PUT" {
 		var data struct {
-			ID          int                   `json:"id"`
-			Name        string                `json:"name"`
-			Description string                `json:"description"`
-			Action      string                `json:"action"`
-			Protocol    string                `json:"protocol"`
-			DestIP      string                `json:"dest_ip"`
-			DestPort    string                `json:"dest_port"`
+			ID          int                  `json:"id"`
+			Name        string               `json:"name"`
+			Description string               `json:"description"`
+			Action      string               `json:"action"`
+			Protocol    string               `json:"protocol"`
+			DestIP      string               `json:"dest_ip"`
+			DestPort    string               `json:"dest_port"`
 			Sources     []FirewallRuleSource `json:"sources"`
 		}
-		json.NewDecoder(r.Body).Decode(&data)
+		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+			return
+		}
+		if !isValidAction(data.Action) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid action: must be allow or deny"})
+			return
+		}
+		if !isValidProtocol(data.Protocol) {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid protocol: must be tcp, udp, or any"})
+			return
+		}
 
-		db.Exec(`UPDATE rule_groups SET name = ?, description = ?, action = ?, protocol = ?, dest_ip = ?, dest_port = ?
+		tx, err := db.Begin()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		if _, err := tx.Exec(`UPDATE rule_groups SET name = ?, description = ?, action = ?, protocol = ?, dest_ip = ?, dest_port = ?
 			WHERE id = ?`,
-			data.Name, data.Description, data.Action, data.Protocol, data.DestIP, data.DestPort, data.ID)
+			data.Name, data.Description, data.Action, data.Protocol, data.DestIP, data.DestPort, data.ID); err != nil {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
 
-		db.Exec("DELETE FROM rule_sources WHERE group_id = ?", data.ID)
+		if _, err := tx.Exec("DELETE FROM rule_sources WHERE group_id = ?", data.ID); err != nil {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
 
 		for _, source := range data.Sources {
-			db.Exec(`INSERT INTO rule_sources (group_id, source_ip, source_port, description)
+			if _, err := tx.Exec(`INSERT INTO rule_sources (group_id, source_ip, source_port, description)
 				VALUES (?, ?, ?, ?)`,
-				data.ID, source.SourceIP, source.SourcePort, source.Description)
+				data.ID, source.SourceIP, source.SourcePort, source.Description); err != nil {
+				tx.Rollback()
+				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				return
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
 		}
 
 		if err := syncUFWRules(); err != nil {
@@ -619,7 +729,10 @@ func apiDeleteGroupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var data map[string]int
-	json.NewDecoder(r.Body).Decode(&data)
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
 
 	_, err := db.Exec("DELETE FROM rule_groups WHERE id = ?", data["id"])
 	if err != nil {
@@ -633,6 +746,14 @@ func apiDeleteGroupHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"success": "Group deleted"})
+}
+
+func isValidAction(a string) bool {
+	return a == "allow" || a == "deny"
+}
+
+func isValidProtocol(p string) bool {
+	return p == "tcp" || p == "udp" || p == "any"
 }
 
 func rulesHandler(w http.ResponseWriter, r *http.Request) {
@@ -863,7 +984,9 @@ func syncUFWRules() error {
 	// Add rules that are desired but not yet in UFW
 	for key := range desired {
 		if !current[key] {
-			exec.Command("ufw", strings.Split(key, " ")...).Run()
+			if out, err := exec.Command("ufw", strings.Split(key, " ")...).CombinedOutput(); err != nil {
+				log.Printf("ufw add rule %q failed: %v — %s", key, err, out)
+			}
 		}
 	}
 
@@ -871,7 +994,9 @@ func syncUFWRules() error {
 	for key := range current {
 		if !desired[key] {
 			deleteArgs := append([]string{"delete"}, strings.Split(key, " ")...)
-			exec.Command("ufw", deleteArgs...).Run()
+			if out, err := exec.Command("ufw", deleteArgs...).CombinedOutput(); err != nil {
+				log.Printf("ufw delete rule %q failed: %v — %s", key, err, out)
+			}
 		}
 	}
 
