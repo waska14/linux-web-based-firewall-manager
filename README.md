@@ -11,6 +11,7 @@ A lightweight, web-based management interface for UFW (Uncomplicated Firewall) o
 - 👥 **Multiple admin accounts** with individual logins (no more sharing root)
 - 🛡️ **Lockout protection** - safe IPs always keep SSH and web UI accessible
 - 📁 **Organized rules** - group related rules together (e.g., "Web Servers", "VPN Access")
+- 🔄 **Import/Export** - copy your full config between servers in two clicks
 - 🎯 **Zero external dependencies** - runs locally, talks directly to UFW
 
 Perfect if you're already using UFW and want a simple, self-hosted management UI.
@@ -21,14 +22,14 @@ Perfect if you're already using UFW and want a simple, self-hosted management UI
 
 ### 🔐 User Management
 - Multiple admin accounts with bcrypt-hashed passwords
-- Optional display names for better identification
 - Self-service password changes
-- Session-based authentication
+- Session-based authentication (24h expiry)
 
 ### 🔥 Firewall Rule Groups
 Group rules by purpose (e.g., "Allow HTTPS to web servers"):
 - **Group settings**: Action (Allow/Deny), Protocol (TCP/UDP/Any), Destination IP/Port
 - **Multiple sources per group**: Each with IP/CIDR, optional port, and description
+- **Duplicate** any group with one click to use it as a starting point
 - Example: One group "Web Traffic" → Multiple office/home IPs can access port 443
 
 ### 🚨 Safe IP Protection
@@ -39,8 +40,15 @@ Group rules by purpose (e.g., "Allow HTTPS to web servers"):
 
 ### ⚡ Quick Actions
 - View firewall status (active/inactive)
-- Enable/disable with one click
+- Enable/disable with one click — enabling re-applies all rules from the database
 - Reset to safe defaults (preserves safe IPs)
+
+### 📋 Rules Page
+- View all active UFW rules in one human-readable list
+- **Import/Export modal** with two tabs:
+  - **Whitelist** — copy safe IPs config between servers as JSON
+  - **Groups** — copy all rule groups between servers as JSON
+  - Paste from another server and save to replicate the full config
 
 ---
 
@@ -82,10 +90,14 @@ Open `http://YOUR_SERVER_IP:PORT` and login with your admin credentials.
 ### Managing Firewall Rules
 
 **Create a rule group:**
-1. Click "Add Rule Group"
+1. Click "Add Rule Group" (next to the Rule Groups heading)
 2. Set destination (e.g., Allow TCP port 443)
 3. Add sources (e.g., office IP, home IP, partner IP)
 4. Each source can have its own description
+
+**Duplicate a group:**
+- Click "Duplicate" on any group to open a pre-filled copy (name prefixed with "Copy Of")
+- Adjust what you need and save
 
 **Example group:**
 - Name: "Allow HTTPS to Web Server"
@@ -94,6 +106,13 @@ Open `http://YOUR_SERVER_IP:PORT` and login with your admin credentials.
     - 192.168.1.0/24 (Office network)
     - 91.98.234.244 (Admin home)
     - 203.0.113.0/24 (Partner company)
+
+### Copying Config Between Servers
+
+1. Go to the **Rules** page on the source server
+2. Click **Import / Export**
+3. Copy the JSON from the **Whitelist** and/or **Groups** tab
+4. On the target server, open the same modal, paste into the relevant tab, click **Save**
 
 ### Managing Safe IPs
 
@@ -111,6 +130,23 @@ On the Users page:
 
 ---
 
+## Updating to a New Version
+
+Two scripts handle smooth production updates with zero manual steps:
+
+```bash
+# On the server:
+sudo ./stop.sh       # gracefully stop the service
+
+git pull             # get new code (or however you update)
+
+sudo ./deploy.sh     # build, install binary, start service
+```
+
+`deploy.sh` will also stop the service itself if you skip `stop.sh`, so you can always just run `sudo ./deploy.sh` for a one-step update.
+
+---
+
 ## Architecture
 
 ```
@@ -124,7 +160,7 @@ On the Users page:
 │  (main.go)      │      │ Database │
 └────────┬────────┘      └──────────┘
          │
-         │ Executes commands
+         │ syncUFWRules() — diff-based sync
          │
 ┌────────▼────────┐
 │      UFW        │
@@ -132,10 +168,7 @@ On the Users page:
 └─────────────────┘
 ```
 
-**Components:**
-- **Web server** (Go): Handles HTTP requests, renders UI
-- **SQLite database**: Stores users, sessions, rules, safe IPs
-- **UFW integration**: Executes `ufw` commands to manage firewall
+**Rule sync:** Every change saves to the database first, then `syncUFWRules()` reads the full desired state from DB, compares it to what UFW currently has (`ufw show added`), adds missing rules, and removes extra ones. New rules are always added before old ones are removed — no traffic gap. A mutex ensures only one sync runs at a time.
 
 **Files:**
 - Binaries: `/opt/firewall-manager/`
@@ -168,11 +201,12 @@ sudo journalctl -u firewall-manager -f
 - Secure session tokens (64-char random hex)
 - HttpOnly, SameSite cookies
 - Safe IP protection against lockouts
+- Atomic DB transactions for rule/whitelist changes
 
 ⚠️ **Production recommendations:**
 - Use HTTPS (put behind Nginx/Caddy reverse proxy)
 - Restrict access to trusted admin IPs only
-- The app runs as root (required for UFW) - only expose to trusted admins
+- The app runs as root (required for UFW) — only expose to trusted admins
 
 ---
 
