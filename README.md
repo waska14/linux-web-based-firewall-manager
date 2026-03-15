@@ -171,7 +171,10 @@ sudo ./deploy.sh     # build, install binary, start service
 **Rule sync:** Every change saves to the database first, then `syncUFWRules()` reads the full desired state from DB, compares it to what UFW currently has (`ufw show added`), adds missing rules, and removes extra ones. New rules are always added before old ones are removed — no traffic gap. A mutex ensures only one sync runs at a time.
 
 **Files:**
-- Binaries: `/opt/firewall-manager/`
+- `main.go` — HTTP server, handlers, UFW sync logic
+- `schema.go` — single source of truth for DB schema (compiled into both binaries)
+- `init-db.go` — one-time setup tool (admin user, safe IPs seed)
+- Installed binaries: `/opt/firewall-manager/`
 - Database: `/var/lib/firewall-manager/firewall.db`
 - Service: `/etc/systemd/system/firewall-manager.service`
 

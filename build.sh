@@ -26,11 +26,11 @@ $GO_BIN mod download
 
 # Build the main binary with CGO enabled
 echo "Compiling main binary..."
-CGO_ENABLED=1 $GO_BIN build -o firewall-manager main.go
+CGO_ENABLED=1 $GO_BIN build -o firewall-manager main.go schema.go
 
 # Build the init-db tool with CGO enabled
 echo "Compiling init-db tool..."
-CGO_ENABLED=1 $GO_BIN build -o init-db init-db.go
+CGO_ENABLED=1 $GO_BIN build -o init-db init-db.go schema.go
 
 echo ""
 echo "✓ Build complete!"
