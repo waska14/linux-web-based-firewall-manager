@@ -289,6 +289,11 @@
             gap: 10px;
             margin-top: 12px;
         }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 
@@ -337,7 +342,7 @@
             </p>
             <textarea id="whitelistJson" spellcheck="false"></textarea>
             <div class="tab-actions">
-                <button class="btn btn-success" onclick="saveWhitelist()">Save to this server</button>
+                <button id="saveWhitelistBtn" class="btn btn-success" onclick="saveWhitelist()">Save to this server</button>
                 <button class="btn btn-secondary" onclick="copyToClipboard('whitelistJson')">Copy</button>
             </div>
         </div>
@@ -350,7 +355,7 @@
             </p>
             <textarea id="groupsJson" spellcheck="false"></textarea>
             <div class="tab-actions">
-                <button class="btn btn-success" onclick="saveGroups()">Save to this server</button>
+                <button id="saveGroupsBtn" class="btn btn-success" onclick="saveGroups()">Save to this server</button>
                 <button class="btn btn-secondary" onclick="copyToClipboard('groupsJson')">Copy</button>
             </div>
         </div>
@@ -406,6 +411,17 @@
         document.getElementById('tab-' + name).classList.add('active');
     }
 
+    function setLoading(btn, loading) {
+        if (loading) {
+            btn.disabled = true;
+            btn.dataset.origText = btn.textContent;
+            btn.textContent = 'Working...';
+        } else {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.origText;
+        }
+    }
+
     function saveWhitelist() {
         let parsed;
         try {
@@ -414,6 +430,8 @@
             showAlert('Invalid JSON: ' + e.message, 'error');
             return;
         }
+        const btn = document.getElementById('saveWhitelistBtn');
+        setLoading(btn, true);
         fetch('/api/safe-ips/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -421,6 +439,7 @@
         })
             .then(r => r.json())
             .then(result => {
+                setLoading(btn, false);
                 if (result.error) {
                     showAlert('Error: ' + result.error, 'error');
                 } else {
@@ -428,7 +447,8 @@
                     closeImportExport();
                     loadRules();
                 }
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     function saveGroups() {
@@ -439,6 +459,8 @@
             showAlert('Invalid JSON: ' + e.message, 'error');
             return;
         }
+        const btn = document.getElementById('saveGroupsBtn');
+        setLoading(btn, true);
         fetch('/api/import/groups', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -446,6 +468,7 @@
         })
             .then(r => r.json())
             .then(result => {
+                setLoading(btn, false);
                 if (result.error) {
                     showAlert('Error: ' + result.error, 'error');
                 } else {
@@ -453,7 +476,8 @@
                     closeImportExport();
                     loadRules();
                 }
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     function copyToClipboard(id) {

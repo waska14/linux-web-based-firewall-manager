@@ -139,6 +139,11 @@
             background: #334155;
         }
 
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         .card {
             background: #1e293b;
             border: 1px solid #334155;
@@ -437,7 +442,7 @@
         </div>
         <div class="quick-actions">
             <button id="toggleBtn" class="btn btn-success" onclick="toggleFirewall()"></button>
-            <button class="btn btn-danger" onclick="resetFirewall()">Reset to Defaults</button>
+            <button id="resetBtn" class="btn btn-danger" onclick="resetFirewall()">Reset to Defaults</button>
         </div>
     </div>
 
@@ -604,7 +609,7 @@
                                 <div>
                                     <button class="btn btn-secondary btn-sm" onclick="editGroup(${group.id})">Edit</button>
                                     <button class="btn btn-secondary btn-sm" onclick="duplicateGroup(${group.id})">Duplicate</button>
-                                    <button class="btn btn-danger btn-sm" onclick="deleteGroup(${group.id})">Delete</button>
+                                    <button class="btn btn-danger btn-sm" onclick="deleteGroup(${group.id}, this)">Delete</button>
                                 </div>
                             </div>
                             <div class="rules-container">
@@ -674,6 +679,17 @@
         document.getElementById(`source-${id}`).remove();
     }
 
+    function setLoading(btn, loading) {
+        if (loading) {
+            btn.disabled = true;
+            btn.dataset.origText = btn.textContent;
+            btn.textContent = 'Working...';
+        } else {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.origText;
+        }
+    }
+
     function saveGroup(e) {
         e.preventDefault();
 
@@ -699,6 +715,9 @@
             { id: parseInt(groupId), name, description, action, protocol, dest_ip, dest_port, sources } :
             { name, description, action, protocol, dest_ip, dest_port, sources };
 
+        const btn = document.querySelector('[form="groupForm"]');
+        setLoading(btn, true);
+
         fetch('/api/groups', {
             method: method,
             headers: { 'Content-Type': 'application/json' },
@@ -706,6 +725,7 @@
         })
             .then(r => r.json())
             .then(result => {
+                setLoading(btn, false);
                 if (result.error) {
                     showAlert('Error: ' + result.error, 'error');
                 } else {
@@ -713,7 +733,8 @@
                     closeGroupModal();
                     loadGroups();
                 }
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     function editGroup(id) {
@@ -772,8 +793,10 @@
             });
     }
 
-    function deleteGroup(id) {
+    function deleteGroup(id, btn) {
         if (!confirm('Are you sure you want to delete this rule group?')) return;
+
+        setLoading(btn, true);
 
         fetch('/api/groups/delete', {
             method: 'POST',
@@ -784,7 +807,8 @@
             .then(result => {
                 showAlert('Group deleted', 'success');
                 loadGroups();
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     function openSafeIPsModal() {
@@ -837,6 +861,9 @@
             }
         });
 
+        const btn = document.querySelector('[form="safeIPsForm"]');
+        setLoading(btn, true);
+
         fetch('/api/safe-ips/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -844,6 +871,7 @@
         })
             .then(r => r.json())
             .then(result => {
+                setLoading(btn, false);
                 if (result.error) {
                     showAlert('Error: ' + result.error, 'error');
                 } else {
@@ -851,7 +879,8 @@
                     closeSafeIPsModal();
                     loadSafeIPs();
                 }
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     function showAlert(message, type) {
@@ -864,6 +893,7 @@
     function toggleFirewall() {
         const btn = document.getElementById('toggleBtn');
         const action = btn.getAttribute('data-action');
+        setLoading(btn, true);
 
         fetch('/api/firewall/toggle', {
             method: 'POST',
@@ -872,27 +902,34 @@
         })
             .then(r => r.json())
             .then(data => {
+                setLoading(btn, false);
                 if (data.error) {
                     showAlert('Error: ' + data.error, 'error');
                 } else {
                     showAlert(data.success, 'success');
                     loadStatus();
                 }
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     function resetFirewall() {
         if (!confirm('This will delete all rules and reset the firewall to defaults. Your safe IPs will remain accessible. Continue?')) return;
+
+        const btn = document.getElementById('resetBtn');
+        setLoading(btn, true);
 
         fetch('/api/firewall/reset', {
             method: 'POST'
         })
             .then(r => r.json())
             .then(data => {
+                setLoading(btn, false);
                 showAlert('Firewall reset complete', 'success');
                 loadStatus();
                 loadGroups();
-            });
+            })
+            .catch(() => setLoading(btn, false));
     }
 
     document.addEventListener('keydown', function(e) {
