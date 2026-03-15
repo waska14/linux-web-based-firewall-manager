@@ -435,6 +435,13 @@ func apiFirewallToggleHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if data["action"] == "enable" {
+		if err := syncUFWRules(); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Firewall enabled but failed to sync rules: " + err.Error()})
+			return
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]string{"success": "Firewall " + data["action"] + "d"})
 }
 

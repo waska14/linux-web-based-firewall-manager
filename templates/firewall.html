@@ -410,7 +410,6 @@
 <div class="container">
     <div class="header">
         <h1>Firewall Management</h1>
-        <button class="btn btn-primary" onclick="openGroupModal()">Add Rule Group</button>
     </div>
 
     <div id="alert"></div>
@@ -438,7 +437,10 @@
         <div id="safeIPsList"></div>
     </div>
 
-    <h2>Rule Groups</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 30px; margin-bottom: 20px;">
+        <h2 style="margin: 0;">Rule Groups</h2>
+        <button class="btn btn-primary" onclick="openGroupModal()">Add Rule Group</button>
+    </div>
     <div id="groupsContainer"></div>
 </div>
 
@@ -580,6 +582,7 @@
                                 </div>
                                 <div>
                                     <button class="btn btn-secondary btn-sm" onclick="editGroup(${group.id})">Edit</button>
+                                    <button class="btn btn-secondary btn-sm" onclick="duplicateGroup(${group.id})">Duplicate</button>
                                     <button class="btn btn-danger btn-sm" onclick="deleteGroup(${group.id})">Delete</button>
                                 </div>
                             </div>
@@ -703,6 +706,34 @@
                 document.getElementById('groupModalTitle').textContent = 'Edit Rule Group';
                 document.getElementById('groupId').value = id;
                 document.getElementById('groupName').value = group.name;
+                document.getElementById('groupDescription').value = group.description || '';
+                document.getElementById('groupAction').value = group.action;
+                document.getElementById('groupProtocol').value = group.protocol;
+                document.getElementById('groupDestIP').value = group.dest_ip || '';
+                document.getElementById('groupDestPort').value = group.dest_port || '';
+
+                document.getElementById('sourcesContainer').innerHTML = '';
+                if (group.sources && group.sources.length > 0) {
+                    group.sources.forEach(source => addSourceForm(source));
+                } else {
+                    addSourceForm();
+                }
+
+                document.getElementById('groupModal').classList.add('active');
+            });
+    }
+
+    function duplicateGroup(id) {
+        fetch('/api/groups')
+            .then(r => r.json())
+            .then(groups => {
+                const group = groups.find(g => g.id === id);
+                if (!group) return;
+
+                editingGroupId = null;
+                document.getElementById('groupModalTitle').textContent = 'Add Rule Group';
+                document.getElementById('groupId').value = '';
+                document.getElementById('groupName').value = 'Copy Of ' + group.name;
                 document.getElementById('groupDescription').value = group.description || '';
                 document.getElementById('groupAction').value = group.action;
                 document.getElementById('groupProtocol').value = group.protocol;
