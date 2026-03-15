@@ -115,18 +115,18 @@ func generateRulesSection(rules []ufwRule, ipv6 bool) string {
 			target = "DROP"
 		}
 
-		// "any" protocol expands to separate tcp and udp iptables rules.
+		// One tuple comment per logical rule (using the original proto, which may be "any").
+		// ufw show added reads tuple comments — one comment = one displayed line.
+		fmt.Fprintf(&sb, "### tuple ### %s %s %s %s %s %s in\n",
+			r.action, r.proto, dstPort, dstIP, srcPort, srcIP)
+
+		// "any" protocol expands to both tcp and udp iptables lines under the same tuple.
 		protos := []string{r.proto}
 		if r.proto == "any" {
 			protos = []string{"tcp", "udp"}
 		}
 
 		for _, proto := range protos {
-			// Tuple comment — used by `ufw show added` to reconstruct human-readable output.
-			fmt.Fprintf(&sb, "### tuple ### %s %s %s %s %s %s in\n",
-				r.action, proto, dstPort, dstIP, srcPort, srcIP)
-
-			// iptables rule
 			fmt.Fprintf(&sb, "-A %s", chain)
 			if r.srcIP != "" {
 				fmt.Fprintf(&sb, " -s %s", r.srcIP)
@@ -141,8 +141,9 @@ func generateRulesSection(rules []ufwRule, ipv6 bool) string {
 			if r.destPort != "" {
 				fmt.Fprintf(&sb, " --dport %s", r.destPort)
 			}
-			fmt.Fprintf(&sb, " -j %s\n\n", target)
+			fmt.Fprintf(&sb, " -j %s\n", target)
 		}
+		fmt.Fprintf(&sb, "\n")
 	}
 
 	return sb.String()
