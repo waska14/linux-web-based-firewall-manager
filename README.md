@@ -168,7 +168,7 @@ sudo ./deploy.sh     # build, install binary, start service
 └─────────────────┘
 ```
 
-**Rule sync:** Every change saves to the database first, then `syncUFWRules()` reads the full desired state from DB, compares it to what UFW currently has (`ufw show added`), adds missing rules, and removes extra ones. New rules are always added before old ones are removed — no traffic gap. A mutex ensures only one sync runs at a time.
+**Rule sync:** Every change saves to the database first, then `syncUFWRules()` performs a full wipe-and-reapply: it deletes all current UFW rules, then re-adds them in order — allow rules first (safe IPs first within allows), deny rules last. This ordering ensures a broad `deny 0.0.0.0/0` never shadows a specific allow. UFW's default `deny incoming` policy keeps the server safe during the brief wipe window. A mutex ensures only one sync runs at a time.
 
 **Files:**
 - `main.go` — HTTP server, handlers, UFW sync logic

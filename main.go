@@ -1056,8 +1056,9 @@ func syncUFWRules() error {
 	syncMu.Lock()
 	defer syncMu.Unlock()
 
-	// Build desired rule set from DB
-	desired := make(map[string]bool)
+	// Build ordered rule list from DB: allows first, denies last.
+	// Order matters in UFW — first matching rule wins.
+	var allows, denies []string
 
 	var safePort string
 	db.QueryRow("SELECT value FROM config WHERE key = 'safe_port'").Scan(&safePort)
@@ -1066,9 +1067,9 @@ func syncUFWRules() error {
 	for safeRows.Next() {
 		var ip string
 		safeRows.Scan(&ip)
-		desired[strings.Join([]string{"allow", "from", ip, "to", "any", "port", "22"}, " ")] = true
+		allows = append(allows, strings.Join([]string{"allow", "from", ip, "to", "any", "port", "22"}, " "))
 		if safePort != "" {
-			desired[strings.Join([]string{"allow", "from", ip, "to", "any", "port", safePort}, " ")] = true
+			allows = append(allows, strings.Join([]string{"allow", "from", ip, "to", "any", "port", safePort}, " "))
 		}
 	}
 	safeRows.Close()
@@ -1086,35 +1087,41 @@ func syncUFWRules() error {
 		for srcRows.Next() {
 			var srcIP, srcPort string
 			srcRows.Scan(&srcIP, &srcPort)
-			args := buildUFWArgs(action, protocol, srcIP, srcPort, destIP, destPort)
-			desired[strings.Join(args, " ")] = true
+			rule := strings.Join(buildUFWArgs(action, protocol, srcIP, srcPort, destIP, destPort), " ")
+			if action == "deny" {
+				denies = append(denies, rule)
+			} else {
+				allows = append(allows, rule)
+			}
 		}
 		srcRows.Close()
 	}
 	groupRows.Close()
 
-	// Get rules currently in UFW
+	// Full reapply: delete all current rules, then add allows first, denies last.
+	// This guarantees correct ordering regardless of what changed.
+	// During deletion UFW's default deny incoming policy is still active,
+	// so no unintended traffic gets through during the brief gap.
 	current, err := getCurrentUFWRules()
 	if err != nil {
 		return err
 	}
 
-	// Add rules that are desired but not yet in UFW
-	for key := range desired {
-		if !current[key] {
-			if out, err := exec.Command("ufw", strings.Split(key, " ")...).CombinedOutput(); err != nil {
-				log.Printf("ufw add rule %q failed: %v — %s", key, err, out)
-			}
+	for key := range current {
+		deleteArgs := append([]string{"delete"}, strings.Split(key, " ")...)
+		if out, err := exec.Command("ufw", deleteArgs...).CombinedOutput(); err != nil {
+			log.Printf("ufw delete rule %q failed: %v — %s", key, err, out)
 		}
 	}
 
-	// Remove rules that are in UFW but no longer desired
-	for key := range current {
-		if !desired[key] {
-			deleteArgs := append([]string{"delete"}, strings.Split(key, " ")...)
-			if out, err := exec.Command("ufw", deleteArgs...).CombinedOutput(); err != nil {
-				log.Printf("ufw delete rule %q failed: %v — %s", key, err, out)
-			}
+	seen := make(map[string]bool)
+	for _, rule := range append(allows, denies...) {
+		if seen[rule] {
+			continue
+		}
+		seen[rule] = true
+		if out, err := exec.Command("ufw", strings.Split(rule, " ")...).CombinedOutput(); err != nil {
+			log.Printf("ufw add rule %q failed: %v — %s", rule, err, out)
 		}
 	}
 
