@@ -305,14 +305,17 @@ func apiUsersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "PUT" {
-		var data map[string]interface{}
+		var data struct {
+			ID          float64 `json:"id"`
+			DisplayName string  `json:"display_name"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
 			return
 		}
 
 		_, err := db.Exec("UPDATE users SET display_name = ? WHERE id = ?",
-			data["display_name"], int(data["id"].(float64)))
+			data.DisplayName, int(data.ID))
 
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -328,6 +331,7 @@ func apiDeleteUserHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 
 	var data map[string]int
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -349,6 +353,7 @@ func apiChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 
 	cookie, _ := r.Cookie("session")
 	var username string
@@ -401,6 +406,7 @@ func apiFirewallToggleHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 
 	var data map[string]string
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -409,10 +415,14 @@ func apiFirewallToggleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var cmd *exec.Cmd
-	if data["action"] == "enable" {
+	switch data["action"] {
+	case "enable":
 		cmd = exec.Command("ufw", "--force", "enable")
-	} else {
+	case "disable":
 		cmd = exec.Command("ufw", "disable")
+	default:
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid action: must be enable or disable"})
+		return
 	}
 
 	output, err := cmd.CombinedOutput()
@@ -436,6 +446,7 @@ func apiFirewallResetHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -494,11 +505,15 @@ func apiUpdateSafeIPsHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 
 	var data struct {
 		SafeIPs []SafeIP `json:"safe_ips"`
 	}
-	json.NewDecoder(r.Body).Decode(&data)
+	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -727,6 +742,7 @@ func apiDeleteGroupHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 
 	var data map[string]int
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -857,6 +873,16 @@ func apiImportGroupsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, g := range groups {
+		if !isValidAction(g.Action) {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid action in group \"" + g.Name + "\": must be allow or deny"})
+			return
+		}
+		if !isValidProtocol(g.Protocol) {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": "Invalid protocol in group \"" + g.Name + "\": must be tcp, udp, or any"})
+			return
+		}
 		result, err := tx.Exec(`INSERT INTO rule_groups (name, description, action, protocol, dest_ip, dest_port) VALUES (?, ?, ?, ?, ?, ?)`,
 			g.Name, g.Description, g.Action, g.Protocol, g.DestIP, g.DestPort)
 		if err != nil {
