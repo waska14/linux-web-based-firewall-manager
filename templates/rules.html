@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UFW Rules - Firewall Manager</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            min-height: 100vh;
+            color: #e2e8f0;
+        }
+
+        .navbar {
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+            padding: 15px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .navbar-brand {
+            font-size: 20px;
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+
+        .navbar-nav {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .nav-link {
+            color: #cbd5e1;
+            text-decoration: none;
+            padding: 8px 15px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            background: #334155;
+            color: #f1f5f9;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 32px;
+            color: #f1f5f9;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-secondary {
+            background: #475569;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #334155;
+        }
+
+        .btn-success {
+            background: #059669;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #047857;
+        }
+
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #f1f5f9;
+            margin-bottom: 15px;
+        }
+
+        .rule-line {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 13px;
+            padding: 10px 14px;
+            background: #0f172a;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 3px solid #334155;
+            color: #cbd5e1;
+            word-break: break-all;
+        }
+
+        .rule-line.allow {
+            border-left-color: #059669;
+        }
+
+        .rule-line.deny {
+            border-left-color: #dc2626;
+        }
+
+        .rule-empty {
+            color: #475569;
+            font-style: italic;
+        }
+
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .alert-success {
+            background: #065f46;
+            border: 1px solid #047857;
+            color: #d1fae5;
+        }
+
+        .alert-error {
+            background: #7f1d1d;
+            border: 1px solid #991b1b;
+            color: #fecaca;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 30px;
+            width: 90%;
+            max-width: 750px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-title {
+            font-size: 22px;
+            color: #f1f5f9;
+        }
+
+        .close {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            font-size: 28px;
+            cursor: pointer;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            border-bottom: 1px solid #334155;
+            margin-bottom: 20px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            color: #94a3b8;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .tab.active {
+            color: #3b82f6;
+            border-bottom-color: #3b82f6;
+        }
+
+        .tab-panel {
+            display: none;
+        }
+
+        .tab-panel.active {
+            display: block;
+        }
+
+        .tab-desc {
+            color: #94a3b8;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #475569;
+            border-radius: 6px;
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 12px;
+            resize: vertical;
+            min-height: 300px;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .tab-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+
+<body>
+<nav class="navbar">
+    <div class="navbar-brand"><a href="/firewall" class="nav-link">🛡️ Firewall Manager</a></div>
+    <div class="navbar-nav">
+        <a href="/firewall" class="nav-link">Firewall</a>
+        <a href="/rules" class="nav-link active">Rules</a>
+        <a href="/users" class="nav-link">Users</a>
+        <a href="/logout" class="nav-link">Logout [{{.Username}}]</a>
+    </div>
+</nav>
+
+<div class="container">
+    <div class="header">
+        <h1>Active UFW Rules</h1>
+        <button class="btn btn-primary" onclick="openImportExport()">Import / Export</button>
+    </div>
+
+    <div id="alert"></div>
+
+    <div class="card">
+        <div class="card-title">Rules currently in UFW</div>
+        <div id="rulesList"><p class="rule-empty">Loading...</p></div>
+    </div>
+</div>
+
+<!-- Import/Export Modal -->
+<div id="importExportModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2 class="modal-title">Import / Export</h2>
+            <button class="close" onclick="closeImportExport()">&times;</button>
+        </div>
+
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('whitelist')">Whitelist (Safe IPs)</div>
+            <div class="tab" onclick="switchTab('groups')">Rule Groups</div>
+        </div>
+
+        <!-- Whitelist tab -->
+        <div id="tab-whitelist" class="tab-panel active">
+            <p class="tab-desc">
+                Copy this JSON to another server to replicate safe IPs, or paste from another server and save.
+            </p>
+            <textarea id="whitelistJson" spellcheck="false"></textarea>
+            <div class="tab-actions">
+                <button class="btn btn-success" onclick="saveWhitelist()">Save to this server</button>
+                <button class="btn btn-secondary" onclick="copyToClipboard('whitelistJson')">Copy</button>
+            </div>
+        </div>
+
+        <!-- Groups tab -->
+        <div id="tab-groups" class="tab-panel">
+            <p class="tab-desc">
+                Copy this JSON to another server to replicate rule groups, or paste from another server and save.
+                Saving will replace all existing groups on this server.
+            </p>
+            <textarea id="groupsJson" spellcheck="false"></textarea>
+            <div class="tab-actions">
+                <button class="btn btn-success" onclick="saveGroups()">Save to this server</button>
+                <button class="btn btn-secondary" onclick="copyToClipboard('groupsJson')">Copy</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    function loadRules() {
+        fetch('/api/ufw-rules')
+            .then(r => r.json())
+            .then(data => {
+                const list = document.getElementById('rulesList');
+                if (data.error) {
+                    list.innerHTML = `<p class="rule-empty">Error: ${data.error}</p>`;
+                    return;
+                }
+                if (!data || data.length === 0) {
+                    list.innerHTML = '<p class="rule-empty">No rules in UFW</p>';
+                    return;
+                }
+                list.innerHTML = data.map(rule => {
+                    const cls = rule.startsWith('allow') ? 'allow' : rule.startsWith('deny') ? 'deny' : '';
+                    return `<div class="rule-line ${cls}">${escHtml(rule)}</div>`;
+                }).join('');
+            });
+    }
+
+    function openImportExport() {
+        // Load current data into both textareas
+        fetch('/api/safe-ips')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('whitelistJson').value = JSON.stringify(data || [], null, 2);
+            });
+        fetch('/api/export/groups')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('groupsJson').value = JSON.stringify(data || [], null, 2);
+            });
+        document.getElementById('importExportModal').classList.add('active');
+    }
+
+    function closeImportExport() {
+        document.getElementById('importExportModal').classList.remove('active');
+    }
+
+    function switchTab(name) {
+        document.querySelectorAll('.tab').forEach((t, i) => {
+            t.classList.toggle('active', ['whitelist', 'groups'][i] === name);
+        });
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    function saveWhitelist() {
+        let parsed;
+        try {
+            parsed = JSON.parse(document.getElementById('whitelistJson').value);
+        } catch (e) {
+            showAlert('Invalid JSON: ' + e.message, 'error');
+            return;
+        }
+        fetch('/api/safe-ips/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ safe_ips: parsed })
+        })
+            .then(r => r.json())
+            .then(result => {
+                if (result.error) {
+                    showAlert('Error: ' + result.error, 'error');
+                } else {
+                    showAlert('Whitelist saved and synced', 'success');
+                    closeImportExport();
+                    loadRules();
+                }
+            });
+    }
+
+    function saveGroups() {
+        let parsed;
+        try {
+            parsed = JSON.parse(document.getElementById('groupsJson').value);
+        } catch (e) {
+            showAlert('Invalid JSON: ' + e.message, 'error');
+            return;
+        }
+        fetch('/api/import/groups', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(parsed)
+        })
+            .then(r => r.json())
+            .then(result => {
+                if (result.error) {
+                    showAlert('Error: ' + result.error, 'error');
+                } else {
+                    showAlert('Groups saved and synced', 'success');
+                    closeImportExport();
+                    loadRules();
+                }
+            });
+    }
+
+    function copyToClipboard(id) {
+        const el = document.getElementById(id);
+        el.select();
+        navigator.clipboard.writeText(el.value).catch(() => document.execCommand('copy'));
+    }
+
+    function showAlert(message, type) {
+        const el = document.getElementById('alert');
+        el.className = `alert alert-${type}`;
+        el.textContent = message;
+        setTimeout(() => el.className = '', 5000);
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    loadRules();
+</script>
+</body>
+
+</html>

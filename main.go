@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -25,6 +27,7 @@ var templatesFS embed.FS
 var (
 	db        *sql.DB
 	templates *template.Template
+	syncMu    sync.Mutex
 )
 
 type User struct {
@@ -77,6 +80,7 @@ func main() {
 	http.HandleFunc("/logout", logoutHandler)
 	http.HandleFunc("/users", authMiddleware(usersHandler))
 	http.HandleFunc("/firewall", authMiddleware(firewallHandler))
+	http.HandleFunc("/rules", authMiddleware(rulesHandler))
 
 	http.HandleFunc("/api/users", authMiddleware(apiUsersHandler))
 	http.HandleFunc("/api/users/delete", authMiddleware(apiDeleteUserHandler))
@@ -88,6 +92,9 @@ func main() {
 	http.HandleFunc("/api/safe-ips/update", authMiddleware(apiUpdateSafeIPsHandler))
 	http.HandleFunc("/api/groups", authMiddleware(apiGroupsHandler))
 	http.HandleFunc("/api/groups/delete", authMiddleware(apiDeleteGroupHandler))
+	http.HandleFunc("/api/ufw-rules", authMiddleware(apiUFWRulesHandler))
+	http.HandleFunc("/api/export/groups", authMiddleware(apiExportGroupsHandler))
+	http.HandleFunc("/api/import/groups", authMiddleware(apiImportGroupsHandler))
 
 	port := os.Getenv("FW_MANAGER_PORT")
 	if port == "" {
@@ -219,18 +226,12 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	var user User
-	var displayName sql.NullString
 	err := db.QueryRow("SELECT id, username, password FROM users WHERE username = ?", username).
 		Scan(&user.ID, &user.Username, &user.Password)
 
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)) != nil {
 		templates.ExecuteTemplate(w, "login.html", map[string]string{"Error": "Invalid credentials"})
 		return
-	}
-
-	db.QueryRow("SELECT display_name FROM users WHERE username = ?", username).Scan(&displayName)
-	if displayName.Valid {
-		user.DisplayName = displayName.String
 	}
 
 	// Generate secure session token
@@ -292,7 +293,7 @@ func apiUsersHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
 	if r.Method == "GET" {
-		rows, err := db.Query("SELECT id, username, display_name FROM users")
+		rows, err := db.Query("SELECT id, username, display_name FROM users ORDER BY id ASC")
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -443,28 +444,13 @@ func apiFirewallResetHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exec.Command("ufw", "--force", "reset").Run()
-	exec.Command("ufw", "default", "deny", "incoming").Run()
-	exec.Command("ufw", "default", "allow", "outgoing").Run()
-
-	var safePort string
-	db.QueryRow("SELECT value FROM config WHERE key = 'safe_port'").Scan(&safePort)
-
-	rows, _ := db.Query("SELECT ip FROM safe_ips")
-	for rows.Next() {
-		var ip string
-		rows.Scan(&ip)
-		exec.Command("ufw", "allow", "from", ip, "to", "any", "port", "22").Run()
-		if safePort != "" {
-			exec.Command("ufw", "allow", "from", ip, "to", "any", "port", safePort).Run()
-		}
-	}
-	rows.Close()
-
 	db.Exec("DELETE FROM rule_sources")
 	db.Exec("DELETE FROM rule_groups")
 
-	exec.Command("ufw", "--force", "enable").Run()
+	if err := syncUFWRules(); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to sync firewall rules: " + err.Error()})
+		return
+	}
 
 	json.NewEncoder(w).Encode(map[string]string{"success": "Firewall reset complete"})
 }
@@ -503,36 +489,39 @@ func apiUpdateSafeIPsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&data)
 
-	rows, _ := db.Query("SELECT ip FROM safe_ips")
-	var oldIPs []string
-	for rows.Next() {
-		var ip string
-		rows.Scan(&ip)
-		oldIPs = append(oldIPs, ip)
-	}
-	rows.Close()
-
-	var safePort string
-	db.QueryRow("SELECT value FROM config WHERE key = 'safe_port'").Scan(&safePort)
-
-	for _, ip := range oldIPs {
-		exec.Command("ufw", "delete", "allow", "from", ip, "to", "any", "port", "22").Run()
-		if safePort != "" {
-			exec.Command("ufw", "delete", "allow", "from", ip, "to", "any", "port", safePort).Run()
-		}
+	tx, err := db.Begin()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to start transaction: " + err.Error()})
+		return
 	}
 
-	db.Exec("DELETE FROM safe_ips")
+	if _, err := tx.Exec("DELETE FROM safe_ips"); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to clear safe IPs: " + err.Error()})
+		return
+	}
 
 	for _, safeIP := range data.SafeIPs {
 		ip := strings.TrimSpace(safeIP.IP)
-		if ip != "" {
-			db.Exec("INSERT INTO safe_ips (ip, description) VALUES (?, ?)", ip, safeIP.Description)
-			exec.Command("ufw", "allow", "from", ip, "to", "any", "port", "22").Run()
-			if safePort != "" {
-				exec.Command("ufw", "allow", "from", ip, "to", "any", "port", safePort).Run()
-			}
+		if ip == "" {
+			continue
 		}
+		if _, err := tx.Exec("INSERT INTO safe_ips (ip, description) VALUES (?, ?)", ip, safeIP.Description); err != nil {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to insert safe IP: " + err.Error()})
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to commit transaction: " + err.Error()})
+		return
+	}
+
+	if err := syncUFWRules(); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to sync firewall rules: " + err.Error()})
+		return
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"success": "Safe IPs updated"})
@@ -616,12 +605,11 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 				return
 			}
+		}
 
-			if err := applyUFWRuleForSource(data.Action, data.Protocol, source.SourceIP, source.SourcePort,
-				data.DestIP, data.DestPort); err != nil {
-				json.NewEncoder(w).Encode(map[string]string{"error": "Failed to apply rule: " + err.Error()})
-				return
-			}
+		if err := syncUFWRules(); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to sync firewall rules: " + err.Error()})
+			return
 		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -644,18 +632,6 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewDecoder(r.Body).Decode(&data)
 
-		rows, _ := db.Query(`SELECT rs.source_ip, rs.source_port, rg.action, rg.protocol, rg.dest_ip, rg.dest_port
-			FROM rule_sources rs
-			JOIN rule_groups rg ON rs.group_id = rg.id
-			WHERE rs.group_id = ?`, data.ID)
-
-		for rows.Next() {
-			var srcIP, srcPort, action, protocol, destIP, destPort string
-			rows.Scan(&srcIP, &srcPort, &action, &protocol, &destIP, &destPort)
-			deleteUFWRuleForSource(action, protocol, srcIP, srcPort, destIP, destPort)
-		}
-		rows.Close()
-
 		db.Exec(`UPDATE rule_groups SET name = ?, description = ?, action = ?, protocol = ?, dest_ip = ?, dest_port = ?
 			WHERE id = ?`,
 			data.Name, data.Description, data.Action, data.Protocol, data.DestIP, data.DestPort, data.ID)
@@ -666,9 +642,11 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 			db.Exec(`INSERT INTO rule_sources (group_id, source_ip, source_port, description)
 				VALUES (?, ?, ?, ?)`,
 				data.ID, source.SourceIP, source.SourcePort, source.Description)
+		}
 
-			applyUFWRuleForSource(data.Action, data.Protocol, source.SourceIP, source.SourcePort,
-				data.DestIP, data.DestPort)
+		if err := syncUFWRules(); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Failed to sync firewall rules: " + err.Error()})
+			return
 		}
 
 		json.NewEncoder(w).Encode(map[string]string{"success": "Group updated"})
@@ -684,100 +662,260 @@ func apiDeleteGroupHandler(w http.ResponseWriter, r *http.Request) {
 	var data map[string]int
 	json.NewDecoder(r.Body).Decode(&data)
 
-	rows, _ := db.Query(`SELECT rs.source_ip, rs.source_port, rg.action, rg.protocol, rg.dest_ip, rg.dest_port
-		FROM rule_sources rs
-		JOIN rule_groups rg ON rs.group_id = rg.id
-		WHERE rg.id = ?`, data["id"])
-
-	for rows.Next() {
-		var srcIP, srcPort, action, protocol, destIP, destPort string
-		rows.Scan(&srcIP, &srcPort, &action, &protocol, &destIP, &destPort)
-		deleteUFWRuleForSource(action, protocol, srcIP, srcPort, destIP, destPort)
-	}
-	rows.Close()
-
 	_, err := db.Exec("DELETE FROM rule_groups WHERE id = ?", data["id"])
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
+	if err := syncUFWRules(); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to sync firewall rules: " + err.Error()})
+		return
+	}
+
 	json.NewEncoder(w).Encode(map[string]string{"success": "Group deleted"})
 }
 
-func applyUFWRuleForSource(action, protocol, sourceIP, sourcePort, destIP, destPort string) error {
-	var args []string
+func rulesHandler(w http.ResponseWriter, r *http.Request) {
+	cookie, _ := r.Cookie("session")
+	var username string
+	db.QueryRow("SELECT username FROM sessions WHERE token = ?", cookie.Value).Scan(&username)
+	templates.ExecuteTemplate(w, "rules.html", map[string]string{"Username": username})
+}
 
-	if action == "deny" {
-		args = append(args, "deny")
-	} else {
-		args = append(args, "allow")
-	}
-
-	if sourceIP != "" {
-		args = append(args, "from", sourceIP)
-	}
-
-	if sourcePort != "" {
-		args = append(args, "port", sourcePort)
-	}
-
-	if destIP != "" {
-		args = append(args, "to", destIP)
-	} else {
-		args = append(args, "to", "any")
-	}
-
-	if destPort != "" {
-		args = append(args, "port", destPort)
-	}
-
-	if protocol != "any" && protocol != "" {
-		args = append(args, "proto", protocol)
-	}
-
-	cmd := exec.Command("ufw", args...)
-	output, err := cmd.CombinedOutput()
+func apiUFWRulesHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	rules, err := getCurrentUFWRules()
 	if err != nil {
-		return fmt.Errorf("%s: %s", err, output)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
-
-	return nil
+	list := make([]string, 0, len(rules))
+	for rule := range rules {
+		list = append(list, rule)
+	}
+	sort.Strings(list)
+	json.NewEncoder(w).Encode(list)
 }
 
-func deleteUFWRuleForSource(action, protocol, sourceIP, sourcePort, destIP, destPort string) error {
-	args := []string{"delete"}
+type exportSource struct {
+	SourceIP    string `json:"source_ip"`
+	SourcePort  string `json:"source_port"`
+	Description string `json:"description"`
+}
 
+type exportGroup struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Action      string         `json:"action"`
+	Protocol    string         `json:"protocol"`
+	DestIP      string         `json:"dest_ip"`
+	DestPort    string         `json:"dest_port"`
+	Sources     []exportSource `json:"sources"`
+}
+
+func apiExportGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	groupRows, err := db.Query(`SELECT id, name, description, action, protocol, dest_ip, dest_port FROM rule_groups ORDER BY id ASC`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer groupRows.Close()
+
+	var groups []exportGroup
+	for groupRows.Next() {
+		var groupID int
+		var g exportGroup
+		groupRows.Scan(&groupID, &g.Name, &g.Description, &g.Action, &g.Protocol, &g.DestIP, &g.DestPort)
+
+		srcRows, _ := db.Query(`SELECT source_ip, source_port, description FROM rule_sources WHERE group_id = ?`, groupID)
+		for srcRows.Next() {
+			var s exportSource
+			srcRows.Scan(&s.SourceIP, &s.SourcePort, &s.Description)
+			g.Sources = append(g.Sources, s)
+		}
+		srcRows.Close()
+
+		groups = append(groups, g)
+	}
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	enc.Encode(groups)
+}
+
+func apiImportGroupsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	var groups []exportGroup
+	if err := json.NewDecoder(r.Body).Decode(&groups); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON: " + err.Error()})
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if _, err := tx.Exec("DELETE FROM rule_sources"); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if _, err := tx.Exec("DELETE FROM rule_groups"); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	for _, g := range groups {
+		result, err := tx.Exec(`INSERT INTO rule_groups (name, description, action, protocol, dest_ip, dest_port) VALUES (?, ?, ?, ?, ?, ?)`,
+			g.Name, g.Description, g.Action, g.Protocol, g.DestIP, g.DestPort)
+		if err != nil {
+			tx.Rollback()
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		groupID, _ := result.LastInsertId()
+		for _, s := range g.Sources {
+			if _, err := tx.Exec(`INSERT INTO rule_sources (group_id, source_ip, source_port, description) VALUES (?, ?, ?, ?)`,
+				groupID, s.SourceIP, s.SourcePort, s.Description); err != nil {
+				tx.Rollback()
+				json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		tx.Rollback()
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	if err := syncUFWRules(); err != nil {
+		json.NewEncoder(w).Encode(map[string]string{"error": "Imported but failed to sync: " + err.Error()})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"success": "Groups imported"})
+}
+
+// getCurrentUFWRules parses `ufw show added` and returns the set of currently
+// applied rules as canonical strings (e.g. "allow from 1.2.3.4 to any port 22").
+func getCurrentUFWRules() (map[string]bool, error) {
+	output, err := exec.Command("ufw", "show", "added").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ufw show added: %s", output)
+	}
+	rules := make(map[string]bool)
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "ufw ") {
+			rules[strings.TrimPrefix(line, "ufw ")] = true
+		}
+	}
+	return rules, nil
+}
+
+// buildUFWArgs builds the UFW command arguments for a single rule.
+func buildUFWArgs(action, protocol, sourceIP, sourcePort, destIP, destPort string) []string {
+	var args []string
 	if action == "deny" {
 		args = append(args, "deny")
 	} else {
 		args = append(args, "allow")
 	}
-
 	if sourceIP != "" {
 		args = append(args, "from", sourceIP)
 	}
-
 	if sourcePort != "" {
 		args = append(args, "port", sourcePort)
 	}
-
 	if destIP != "" {
 		args = append(args, "to", destIP)
 	} else {
 		args = append(args, "to", "any")
 	}
-
 	if destPort != "" {
 		args = append(args, "port", destPort)
 	}
-
 	if protocol != "any" && protocol != "" {
 		args = append(args, "proto", protocol)
 	}
+	return args
+}
 
-	cmd := exec.Command("ufw", args...)
-	cmd.Run()
+func syncUFWRules() error {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+
+	// Build desired rule set from DB
+	desired := make(map[string]bool)
+
+	var safePort string
+	db.QueryRow("SELECT value FROM config WHERE key = 'safe_port'").Scan(&safePort)
+
+	safeRows, _ := db.Query("SELECT ip FROM safe_ips")
+	for safeRows.Next() {
+		var ip string
+		safeRows.Scan(&ip)
+		desired[strings.Join([]string{"allow", "from", ip, "to", "any", "port", "22"}, " ")] = true
+		if safePort != "" {
+			desired[strings.Join([]string{"allow", "from", ip, "to", "any", "port", safePort}, " ")] = true
+		}
+	}
+	safeRows.Close()
+
+	groupRows, err := db.Query(`SELECT id, action, protocol, dest_ip, dest_port FROM rule_groups`)
+	if err != nil {
+		return err
+	}
+	for groupRows.Next() {
+		var groupID int
+		var action, protocol, destIP, destPort string
+		groupRows.Scan(&groupID, &action, &protocol, &destIP, &destPort)
+
+		srcRows, _ := db.Query(`SELECT source_ip, source_port FROM rule_sources WHERE group_id = ?`, groupID)
+		for srcRows.Next() {
+			var srcIP, srcPort string
+			srcRows.Scan(&srcIP, &srcPort)
+			args := buildUFWArgs(action, protocol, srcIP, srcPort, destIP, destPort)
+			desired[strings.Join(args, " ")] = true
+		}
+		srcRows.Close()
+	}
+	groupRows.Close()
+
+	// Get rules currently in UFW
+	current, err := getCurrentUFWRules()
+	if err != nil {
+		return err
+	}
+
+	// Add rules that are desired but not yet in UFW
+	for key := range desired {
+		if !current[key] {
+			exec.Command("ufw", strings.Split(key, " ")...).Run()
+		}
+	}
+
+	// Remove rules that are in UFW but no longer desired
+	for key := range current {
+		if !desired[key] {
+			deleteArgs := append([]string{"delete"}, strings.Split(key, " ")...)
+			exec.Command("ufw", deleteArgs...).Run()
+		}
+	}
 
 	return nil
 }
+
