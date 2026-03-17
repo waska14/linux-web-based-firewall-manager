@@ -9,6 +9,50 @@ import (
 	"strings"
 )
 
+// defaultUserRules and defaultUser6Rules are the minimal UFW rules file templates used when
+// the existing files are missing or have no ### RULES ### markers (e.g. after ufw reset).
+const defaultUserRules = `*filter
+:ufw-user-input - [0:0]
+:ufw-user-output - [0:0]
+:ufw-user-forward - [0:0]
+:ufw-before-logging-input - [0:0]
+:ufw-before-logging-output - [0:0]
+:ufw-before-logging-forward - [0:0]
+:ufw-logging-deny - [0:0]
+:ufw-logging-allow - [0:0]
+:ufw-user-limit - [0:0]
+:ufw-user-limit-accept - [0:0]
+### RULES ###
+
+### END RULES ###
+-A ufw-user-limit -m limit --limit 3/minute -j LOG --log-prefix "[UFW LIMIT BLOCK] "
+-A ufw-user-limit -j REJECT
+-A ufw-user-limit-accept -j ACCEPT
+COMMIT
+# END FILTER
+`
+
+const defaultUser6Rules = `*filter
+:ufw6-user-input - [0:0]
+:ufw6-user-output - [0:0]
+:ufw6-user-forward - [0:0]
+:ufw6-before-logging-input - [0:0]
+:ufw6-before-logging-output - [0:0]
+:ufw6-before-logging-forward - [0:0]
+:ufw6-logging-deny - [0:0]
+:ufw6-logging-allow - [0:0]
+:ufw6-user-limit - [0:0]
+:ufw6-user-limit-accept - [0:0]
+### RULES ###
+
+### END RULES ###
+-A ufw6-user-limit -m limit --limit 3/minute -j LOG --log-prefix "[UFW LIMIT BLOCK] "
+-A ufw6-user-limit -j REJECT
+-A ufw6-user-limit-accept -j ACCEPT
+COMMIT
+# END FILTER
+`
+
 // ufwRule represents a single firewall rule in our internal format.
 type ufwRule struct {
 	action   string // "allow" or "deny"
@@ -200,13 +244,17 @@ func syncUFWRules() error {
 	const ipv6Path = "/etc/ufw/user6.rules"
 
 	// Read current files so we can restore them if anything goes wrong.
+	// If a file is missing or has no RULES markers (e.g. after ufw reset), fall back to the
+	// built-in template so sync can still proceed.
 	ipv4Orig, err := os.ReadFile(ipv4Path)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", ipv4Path, err)
+		log.Printf("could not read %s, using default template: %v", ipv4Path, err)
+		ipv4Orig = []byte(defaultUserRules)
 	}
 	ipv6Orig, err := os.ReadFile(ipv6Path)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", ipv6Path, err)
+		log.Printf("could not read %s, using default template: %v", ipv6Path, err)
+		ipv6Orig = []byte(defaultUser6Rules)
 	}
 
 	rules, err := buildRulesFromDB()
@@ -214,11 +262,22 @@ func syncUFWRules() error {
 		return fmt.Errorf("build rules from DB: %w", err)
 	}
 
-	ipv4New, err := replaceRulesSection(string(ipv4Orig), generateRulesSection(rules, false))
+	ipv4Content := string(ipv4Orig)
+	if !strings.Contains(ipv4Content, "### RULES ###") {
+		log.Printf("user.rules has no RULES markers (ufw reset?), rebuilding from template")
+		ipv4Content = defaultUserRules
+	}
+	ipv6Content := string(ipv6Orig)
+	if !strings.Contains(ipv6Content, "### RULES ###") {
+		log.Printf("user6.rules has no RULES markers (ufw reset?), rebuilding from template")
+		ipv6Content = defaultUser6Rules
+	}
+
+	ipv4New, err := replaceRulesSection(ipv4Content, generateRulesSection(rules, false))
 	if err != nil {
 		return fmt.Errorf("replace IPv4 rules: %w", err)
 	}
-	ipv6New, err := replaceRulesSection(string(ipv6Orig), generateRulesSection(rules, true))
+	ipv6New, err := replaceRulesSection(ipv6Content, generateRulesSection(rules, true))
 	if err != nil {
 		return fmt.Errorf("replace IPv6 rules: %w", err)
 	}
