@@ -262,24 +262,22 @@ func syncUFWRules() error {
 		return fmt.Errorf("build rules from DB: %w", err)
 	}
 
-	ipv4Content := string(ipv4Orig)
-	if !strings.Contains(ipv4Content, "### RULES ###") {
-		log.Printf("user.rules has no RULES markers (ufw reset?), rebuilding from template")
-		ipv4Content = defaultUserRules
-	}
-	ipv6Content := string(ipv6Orig)
-	if !strings.Contains(ipv6Content, "### RULES ###") {
-		log.Printf("user6.rules has no RULES markers (ufw reset?), rebuilding from template")
-		ipv6Content = defaultUser6Rules
-	}
-
-	ipv4New, err := replaceRulesSection(ipv4Content, generateRulesSection(rules, false))
+	ipv4New, err := replaceRulesSection(string(ipv4Orig), generateRulesSection(rules, false))
 	if err != nil {
-		return fmt.Errorf("replace IPv4 rules: %w", err)
+		// File is missing markers (e.g. after ufw reset) — rebuild from built-in template.
+		log.Printf("user.rules missing RULES markers, rebuilding from template: %v", err)
+		ipv4New, err = replaceRulesSection(defaultUserRules, generateRulesSection(rules, false))
+		if err != nil {
+			return fmt.Errorf("replace IPv4 rules: %w", err)
+		}
 	}
-	ipv6New, err := replaceRulesSection(ipv6Content, generateRulesSection(rules, true))
+	ipv6New, err := replaceRulesSection(string(ipv6Orig), generateRulesSection(rules, true))
 	if err != nil {
-		return fmt.Errorf("replace IPv6 rules: %w", err)
+		log.Printf("user6.rules missing RULES markers, rebuilding from template: %v", err)
+		ipv6New, err = replaceRulesSection(defaultUser6Rules, generateRulesSection(rules, true))
+		if err != nil {
+			return fmt.Errorf("replace IPv6 rules: %w", err)
+		}
 	}
 
 	if err := writeFileAtomic(ipv4Path, []byte(ipv4New), 0640); err != nil {
