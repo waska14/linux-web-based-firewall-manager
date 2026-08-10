@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"os"
@@ -114,7 +115,8 @@ func buildRulesFromDB() ([]ufwRule, error) {
 
 // generateRulesSection generates the block that goes between ### RULES ### and ### END RULES ###.
 // Each rule produces a UFW tuple comment (used by `ufw show added`) and the corresponding iptables line(s).
-// If ipv6 is true, only rules without specific IPs are included (IPv4 addresses don't apply to IPv6 traffic).
+// Rules are emitted only into the file matching their explicit address family.
+// Rules without explicit IPs are emitted for both IPv4 and IPv6.
 func generateRulesSection(rules []ufwRule, ipv6 bool) string {
 	anyIP := "0.0.0.0/0"
 	chain := "ufw-user-input"
@@ -127,8 +129,7 @@ func generateRulesSection(rules []ufwRule, ipv6 bool) string {
 	var sb strings.Builder
 
 	for _, r := range rules {
-		// IPv6 file only gets rules with no specific IP (IPv4 addresses don't apply to IPv6 traffic).
-		if ipv6 && (r.srcIP != "" || r.destIP != "") {
+		if !ruleAppliesToFamily(r, ipv6) {
 			continue
 		}
 
@@ -193,6 +194,28 @@ func generateRulesSection(rules []ufwRule, ipv6 bool) string {
 	return sb.String()
 }
 
+// ruleAppliesToFamily prevents IPv6 addresses from reaching iptables-restore
+// through user.rules and prevents IPv4 addresses from reaching user6.rules.
+// A malformed or mixed-family rule is emitted nowhere; API validation rejects
+// new mixed-family rules, while this guard also protects systems with old data.
+func ruleAppliesToFamily(r ufwRule, ipv6 bool) bool {
+	sourceFamily := ipFamily(r.srcIP)
+	destFamily := ipFamily(r.destIP)
+	if sourceFamily < 0 || destFamily < 0 {
+		return false
+	}
+	if sourceFamily != 0 && destFamily != 0 && sourceFamily != destFamily {
+		return false
+	}
+
+	targetFamily := 4
+	if ipv6 {
+		targetFamily = 6
+	}
+	return (sourceFamily == 0 || sourceFamily == targetFamily) &&
+		(destFamily == 0 || destFamily == targetFamily)
+}
+
 // replaceRulesSection replaces everything between ### RULES ### and ### END RULES ### with newRules.
 func replaceRulesSection(content, newRules string) (string, error) {
 	const startMarker = "### RULES ###"
@@ -232,11 +255,39 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return os.Rename(tmpName, path)
 }
 
+// validateRestoreInput asks the same parser used by UFW to validate a complete
+// rules file without committing it to the kernel. This must happen before a
+// generated candidate replaces either live UFW file.
+func validateRestoreInput(data []byte, ipv6 bool) error {
+	command := "iptables-restore"
+	if ipv6 {
+		command = "ip6tables-restore"
+	}
+
+	cmd := exec.Command(command, "--test")
+	cmd.Stdin = bytes.NewReader(data)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s validation failed: %s", command, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // syncUFWRules writes the full desired rule set directly to UFW's rules files and calls
 // `ufw reload` once. This is O(1) shell forks regardless of rule count, vs. the old
 // approach of one `ufw` invocation per rule (O(n) forks, very slow with many rules).
 // On reload failure, original files are restored and a second reload is attempted.
 func syncUFWRules() error {
+	return applyUFWRules(true)
+}
+
+// prepareUFWRules installs a validated desired ruleset without reloading UFW.
+// It is used before enabling an inactive firewall so invalid files can never be
+// handed to `ufw enable`.
+func prepareUFWRules() error {
+	return applyUFWRules(false)
+}
+
+func applyUFWRules(reload bool) error {
 	syncMu.Lock()
 	defer syncMu.Unlock()
 
@@ -280,6 +331,15 @@ func syncUFWRules() error {
 		}
 	}
 
+	// Never expose unparseable generated content at UFW's live paths. A bad
+	// candidate leaves both the on-disk configuration and active firewall alone.
+	if err := validateRestoreInput([]byte(ipv4New), false); err != nil {
+		return fmt.Errorf("preflight IPv4 rules: %w", err)
+	}
+	if err := validateRestoreInput([]byte(ipv6New), true); err != nil {
+		return fmt.Errorf("preflight IPv6 rules: %w", err)
+	}
+
 	if err := writeFileAtomic(ipv4Path, []byte(ipv4New), 0640); err != nil {
 		return fmt.Errorf("write %s: %w", ipv4Path, err)
 	}
@@ -287,13 +347,21 @@ func syncUFWRules() error {
 		writeFileAtomic(ipv4Path, ipv4Orig, 0640) // restore IPv4
 		return fmt.Errorf("write %s: %w", ipv6Path, err)
 	}
+	if !reload {
+		return nil
+	}
 
 	if out, err := exec.Command("ufw", "reload").CombinedOutput(); err != nil {
 		// Restore original files and reload with them so the firewall stays in a known state.
-		writeFileAtomic(ipv4Path, ipv4Orig, 0640)
-		writeFileAtomic(ipv6Path, ipv6Orig, 0640)
-		exec.Command("ufw", "reload").Run()
-		return fmt.Errorf("ufw reload failed: %s", out)
+		ipv4RestoreErr := writeFileAtomic(ipv4Path, ipv4Orig, 0640)
+		ipv6RestoreErr := writeFileAtomic(ipv6Path, ipv6Orig, 0640)
+		rollbackOutput, rollbackErr := exec.Command("ufw", "reload").CombinedOutput()
+		if ipv4RestoreErr != nil || ipv6RestoreErr != nil || rollbackErr != nil {
+			return fmt.Errorf("ufw reload failed: %s; rollback failed (IPv4: %v, IPv6: %v, reload: %v): %s",
+				strings.TrimSpace(string(out)), ipv4RestoreErr, ipv6RestoreErr, rollbackErr,
+				strings.TrimSpace(string(rollbackOutput)))
+		}
+		return fmt.Errorf("ufw reload failed and original rules were restored: %s", strings.TrimSpace(string(out)))
 	}
 
 	return nil

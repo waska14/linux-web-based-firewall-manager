@@ -122,6 +122,11 @@ func apiImportGroupsHandler(w http.ResponseWriter, r *http.Request) {
 				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source port in group \"" + g.Name + "\": " + s.SourcePort})
 				return
 			}
+			if !hasCompatibleIPFamilies(s.SourceIP, g.DestIP) {
+				tx.Rollback()
+				json.NewEncoder(w).Encode(map[string]string{"error": "Source and destination IPs in group \"" + g.Name + "\" must use the same address family"})
+				return
+			}
 		}
 		result, err := tx.Exec(`INSERT INTO rule_groups (name, description, action, protocol, dest_ip, dest_port) VALUES (?, ?, ?, ?, ?, ?)`,
 			g.Name, g.Description, g.Action, g.Protocol, g.DestIP, g.DestPort)

@@ -45,31 +45,33 @@ func apiFirewallToggleHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cmd *exec.Cmd
 	switch data["action"] {
 	case "enable":
-		cmd = exec.Command("ufw", "--force", "enable")
+		// Generate and preflight the desired files before enabling UFW. Enabling
+		// first could apply a stale or malformed file and lock out remote access.
+		if err := prepareUFWRules(); err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": "Firewall was not enabled because rule validation failed: " + err.Error()})
+			return
+		}
+		output, err := exec.Command("ufw", "--force", "enable").CombinedOutput()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": string(output)})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"success": "Firewall enabled"})
+		return
 	case "disable":
-		cmd = exec.Command("ufw", "disable")
+		output, err := exec.Command("ufw", "disable").CombinedOutput()
+		if err != nil {
+			json.NewEncoder(w).Encode(map[string]string{"error": string(output)})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"success": "Firewall disabled"})
+		return
 	default:
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid action: must be enable or disable"})
 		return
 	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		json.NewEncoder(w).Encode(map[string]string{"error": string(output)})
-		return
-	}
-
-	if data["action"] == "enable" {
-		if err := syncUFWRules(); err != nil {
-			json.NewEncoder(w).Encode(map[string]string{"error": "Firewall enabled but failed to sync rules: " + err.Error()})
-			return
-		}
-	}
-
-	json.NewEncoder(w).Encode(map[string]string{"success": "Firewall " + data["action"] + "d"})
 }
 
 func apiFirewallResetHandler(w http.ResponseWriter, r *http.Request) {

@@ -91,6 +91,10 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source port: " + source.SourcePort})
 				return
 			}
+			if !hasCompatibleIPFamilies(source.SourceIP, data.DestIP) {
+				json.NewEncoder(w).Encode(map[string]string{"error": "Source and destination IPs must use the same address family"})
+				return
+			}
 		}
 
 		tx, err := db.Begin()
@@ -176,6 +180,10 @@ func apiGroupsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			if !isValidPort(source.SourcePort) {
 				json.NewEncoder(w).Encode(map[string]string{"error": "Invalid source port: " + source.SourcePort})
+				return
+			}
+			if !hasCompatibleIPFamilies(source.SourceIP, data.DestIP) {
+				json.NewEncoder(w).Encode(map[string]string{"error": "Source and destination IPs must use the same address family"})
 				return
 			}
 		}
