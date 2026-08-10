@@ -10,6 +10,7 @@ A lightweight, web-based management interface for UFW (Uncomplicated Firewall) o
 - 🖥️ **Manage UFW from your browser** instead of SSH/terminal
 - 👥 **Multiple admin accounts** with individual logins (no more sharing root)
 - 🛡️ **Lockout protection** - safe IPs always keep SSH and web UI accessible
+- ☁️ **Managed Cloudflare allowlist** - allow Cloudflare IPv4/IPv6 ranges to web ports and refresh them automatically
 - 📁 **Organized rules** - group related rules together (e.g., "Web Servers", "VPN Access")
 - 🔄 **Import/Export** - copy your full config between servers in two clicks
 - 🎯 **Zero external dependencies** - runs locally, talks directly to UFW
@@ -19,6 +20,13 @@ Perfect if you're already using UFW and want a simple, self-hosted management UI
 ---
 
 ## Features
+
+### ☁️ Cloudflare Web Access
+
+- One-click allow/disable control on the Firewall page
+- Allows Cloudflare's published IPv4 and IPv6 CIDRs to TCP ports 80 and 443
+- Refreshes enabled ranges from Cloudflare every 30 minutes and reloads UFW only when they change
+- Keeps the last known valid ranges when a download or validation fails
 
 ### 🔐 User Management
 - Multiple admin accounts with bcrypt-hashed passwords

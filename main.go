@@ -9,8 +9,8 @@ import (
 	"os"
 	"sync"
 
-	"golang.org/x/crypto/bcrypt"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed templates/*
@@ -52,6 +52,7 @@ func main() {
 	http.HandleFunc("/api/firewall/status", authMiddleware(apiFirewallStatusHandler))
 	http.HandleFunc("/api/firewall/toggle", authMiddleware(apiFirewallToggleHandler))
 	http.HandleFunc("/api/firewall/reset", authMiddleware(apiFirewallResetHandler))
+	http.HandleFunc("/api/cloudflare", authMiddleware(apiCloudflareHandler))
 	http.HandleFunc("/api/safe-ips", authMiddleware(apiSafeIPsHandler))
 	http.HandleFunc("/api/safe-ips/update", authMiddleware(apiUpdateSafeIPsHandler))
 	http.HandleFunc("/api/groups", authMiddleware(apiGroupsHandler))
@@ -66,6 +67,7 @@ func main() {
 	}
 
 	log.Printf("Starting Firewall Manager on port %s", port)
+	go runCloudflareUpdater()
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 

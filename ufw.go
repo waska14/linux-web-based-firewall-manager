@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -65,7 +66,8 @@ type ufwRule struct {
 }
 
 // buildRulesFromDB reads the database and returns an ordered list of rules:
-// safe IP rules (allows) first, then group allows, then group denies.
+// safe IP rules (allows) first, then managed Cloudflare allows, group allows,
+// and finally group denies.
 func buildRulesFromDB() ([]ufwRule, error) {
 	var allows, denies []ufwRule
 
@@ -85,6 +87,33 @@ func buildRulesFromDB() ([]ufwRule, error) {
 		}
 	}
 	safeRows.Close()
+
+	var cloudflareEnabled string
+	if err := db.QueryRow("SELECT value FROM config WHERE key = 'cloudflare_enabled'").Scan(&cloudflareEnabled); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if cloudflareEnabled == "1" {
+		cloudflareRows, err := db.Query("SELECT cidr FROM cloudflare_ips ORDER BY family, cidr")
+		if err != nil {
+			return nil, err
+		}
+		for cloudflareRows.Next() {
+			var cidr string
+			if err := cloudflareRows.Scan(&cidr); err != nil {
+				cloudflareRows.Close()
+				return nil, err
+			}
+			allows = append(allows,
+				ufwRule{action: "allow", proto: "tcp", srcIP: cidr, destPort: "80"},
+				ufwRule{action: "allow", proto: "tcp", srcIP: cidr, destPort: "443"},
+			)
+		}
+		if err := cloudflareRows.Err(); err != nil {
+			cloudflareRows.Close()
+			return nil, err
+		}
+		cloudflareRows.Close()
+	}
 
 	groupRows, err := db.Query(`SELECT id, action, protocol, dest_ip, dest_port FROM rule_groups`)
 	if err != nil {

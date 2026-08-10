@@ -45,6 +45,10 @@ var dbSchema = []string{
 		ip TEXT PRIMARY KEY,
 		description TEXT
 	)`,
+	`CREATE TABLE IF NOT EXISTS cloudflare_ips (
+		cidr TEXT PRIMARY KEY,
+		family INTEGER NOT NULL CHECK (family IN (4, 6))
+	)`,
 }
 
 func applySchema(db *sql.DB) {

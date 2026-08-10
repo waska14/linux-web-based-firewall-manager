@@ -447,6 +447,20 @@
     </div>
 
     <div class="card">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 20px;">
+            <div>
+                <h3 class="card-title" style="margin-bottom: 8px;">Cloudflare Web Access</h3>
+                <p style="color: #94a3b8;">Allow Cloudflare's published IPv4 and IPv6 networks to TCP ports 80 and 443. Enabled lists refresh every 30 minutes.</p>
+                <div id="cloudflareDetails" style="margin-top: 10px; color: #cbd5e1;">Loading...</div>
+            </div>
+            <div class="quick-actions" style="flex-shrink: 0;">
+                <button id="cloudflareToggleBtn" class="btn btn-success" onclick="toggleCloudflare()">Loading...</button>
+                <button id="cloudflareRefreshBtn" class="btn btn-secondary" onclick="refreshCloudflare()">Refresh Now</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
             <h3 class="card-title" style="margin-bottom: 0;">Safe IPs (Always Accessible)</h3>
             <div>
@@ -582,6 +596,59 @@
                     `<div style="margin-bottom: 8px;"><strong>${ip.ip}</strong>${ip.description ? ': ' + ip.description : ''}</div>`
                 ).join('');
             });
+    }
+
+    function loadCloudflare() {
+        fetch('/api/cloudflare')
+            .then(r => r.json())
+            .then(data => {
+                const button = document.getElementById('cloudflareToggleBtn');
+                button.textContent = data.enabled ? 'Disable Cloudflare IPs' : 'Allow Cloudflare IPs';
+                button.className = data.enabled ? 'btn btn-warning' : 'btn btn-success';
+                button.dataset.action = data.enabled ? 'disable' : 'enable';
+
+                const details = document.getElementById('cloudflareDetails');
+                const state = data.enabled ? 'Enabled' : 'Disabled';
+                let text = `${state} · ${data.ipv4_count || 0} IPv4 and ${data.ipv6_count || 0} IPv6 ranges`;
+                if (data.last_checked) text += ` · Last checked ${new Date(data.last_checked).toLocaleString()}`;
+                if (data.last_error) text += ` · Last error: ${data.last_error}`;
+                details.textContent = text;
+            })
+            .catch(() => {
+                document.getElementById('cloudflareDetails').textContent = 'Could not load Cloudflare status';
+            });
+    }
+
+    function changeCloudflare(action, button) {
+        setLoading(button, true);
+        fetch('/api/cloudflare', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        })
+            .then(async response => ({ ok: response.ok, data: await response.json() }))
+            .then(({ ok, data }) => {
+                setLoading(button, false);
+                if (!ok || data.error) {
+                    showAlert('Error: ' + (data.error || 'Cloudflare request failed'), 'error');
+                } else {
+                    showAlert(action === 'disable' ? 'Cloudflare access disabled' : 'Cloudflare IPs updated', 'success');
+                }
+                loadCloudflare();
+            })
+            .catch(() => {
+                setLoading(button, false);
+                showAlert('Cloudflare request failed', 'error');
+            });
+    }
+
+    function toggleCloudflare() {
+        const button = document.getElementById('cloudflareToggleBtn');
+        changeCloudflare(button.dataset.action, button);
+    }
+
+    function refreshCloudflare() {
+        changeCloudflare('refresh', document.getElementById('cloudflareRefreshBtn'));
     }
 
     function loadGroups() {
@@ -940,6 +1007,7 @@
 
     loadStatus();
     loadSafeIPs();
+    loadCloudflare();
     loadGroups();
     setInterval(loadStatus, 10000);
 </script>
